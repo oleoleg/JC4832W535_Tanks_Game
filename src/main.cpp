@@ -92,4 +92,5 @@ if (touch.read(point)) {
     display.flush();   // обязательно, иначе экран не обновится
 
     delay(16);
+    
 }
