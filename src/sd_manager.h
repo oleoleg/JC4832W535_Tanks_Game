@@ -1,5 +1,14 @@
-//бъявления работы с SD
+#pragma once
+#include <Arduino.h>
 
+bool sdInit();
+bool sdIsReady();
 
-void printMemInfo();
-void printSDCardInfo();
+// Список файлов с размером и датой (HTML)
+String sdListFiles();
+
+// Информация о свободном месте (HTML)
+String sdFreeSpace();
+
+// Удалить файл по имени
+bool sdDeleteFile(const String &filename);

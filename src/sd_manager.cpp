@@ -1,79 +1,91 @@
-
-#include <Arduino.h>
+#include "sd_manager.h"
+#include "config.h"
 #include <SPI.h>
 #include <SD.h>
 
-void printMemInfo() {
+static SPIClass sdSpi(HSPI);
+static bool sdReady = false;
 
-   Serial.println("\n=============================================");
-    Serial.println("   ПОДРОБНЫЙ ОТЧЕТ О ПАМЯТИ ESP32-S3");
-    Serial.println("=============================================");
-
-    // 1. Внутренняя память (SRAM)
-    Serial.printf("Внутренняя RAM (Всего кучи):    %d байт\n", ESP.getHeapSize());
-    Serial.printf("Внутренняя RAM (Свободно):       %d байт\n", ESP.getFreeHeap());
-    Serial.printf("Макс. неделимый блок в RAM:     %d байт\n", ESP.getMaxAllocHeap());
-    Serial.println("---------------------------------------------");
-
-    // 2. Внешняя память (PSRAM)
-    Serial.printf("Внешняя PSRAM (Всего):          %d байт (8 МБ)\n", ESP.getPsramSize());
-    Serial.printf("Внешняя PSRAM (Свободно):       %d байт\n", ESP.getFreePsram());
-    Serial.printf("Макс. неделимый блок в PSRAM:   %d байт\n", ESP.getMaxAllocPsram());
-    Serial.println("---------------------------------------------");
-
-    // 3. Flash-память (Память программ)
-    Serial.printf("Размер Flash-памяти чипа:       %d байт (%d МБ)\n", 
-                  ESP.getFlashChipSize(), ESP.getFlashChipSize() / 1024 / 1024);
-    Serial.printf("Скорость Flash-шины:            %d Гц\n", ESP.getFlashChipSpeed());
-    
-    // Определение режима Flash
-    FlashMode_t mode = ESP.getFlashChipMode();
-    Serial.printf("Режим работы Flash:             %s\n", 
-                  (mode == FM_QIO ? "QIO (Quad IO)" : 
-                  (mode == FM_QOUT ? "QOUT (Quad Output)" : 
-                  (mode == FM_DIO ? "DIO (Dual IO)" : 
-                  (mode == FM_DOUT ? "DOUT (Dual Output)" : "Неизвестно")))));
-    Serial.println("=============================================\n");
-
+bool sdInit() {
+    sdSpi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    if (!SD.begin(SD_CS, sdSpi, 40000000)) {
+        Serial.println("SD: ошибка инициализации!");
+        sdReady = false;
+        return false;
+    }
+    sdReady = true;
+    Serial.printf("SD: OK, %llu MB\n", SD.cardSize() / (1024 * 1024));
+    return true;
 }
 
+bool sdIsReady() {
+    return sdReady;
+}
 
-void printSDCardInfo() {
-    Serial.println("\n---------------------------------------------");
-    Serial.println("         АНАЛИЗ TF / MicroSD КАРТЫ");
-    Serial.println("---------------------------------------------");
+String sdFreeSpace() {
+    if (!sdReady) return "SD not ready";
+    uint64_t total = SD.totalBytes() / (1024 * 1024);
+    uint64_t used  = SD.usedBytes() / (1024 * 1024);
+    uint64_t free  = total - used;
+    char buf[80];
+    snprintf(buf, sizeof(buf), "Free: %llu MB / Total: %llu MB", free, total);
+    return String(buf);
+}
 
-    // Для JC3248W535 пины SPI для SD-карты обычно следующие:
-    // MISO = 13, MOSI = 11, SCK = 12, CS = 10 (или 14 в зависимости от ревизии)
-    // Если на пине 10 не заведется, попробуйте изменить CS_PIN на 14
-    const int SD_CS_PIN = 10; 
-    
-    // Явно инициализируем шину SPI для SD-карты
-    SPI.begin(12, 13, 11, SD_CS_PIN); // SCK, MISO, MOSI, SS
+String sdListFiles() {
+    if (!sdReady) return "<li>SD not ready</li>";
 
-    if (!SD.begin(SD_CS_PIN)) {
-        Serial.println("❌ Ошибка: TF-карта не найдена или не вставлена!");
-        Serial.println("Проверьте, что карта отформатирована в FAT32/exFAT.");
-        Serial.println("---------------------------------------------");
-        return;
+    String html = "";
+    File root = SD.open("/");
+    if (!root) return "<li>Cannot open root</li>";
+
+    int count = 0;
+    File file = root.openNextFile();
+    while (file && count < 100) {
+        if (!file.isDirectory()) {
+            String name = String(file.name());
+            size_t size = file.size();
+
+            html += "<li>";
+            html += name;
+            html += " — ";
+            html += String(size);
+            html += " bytes";
+
+            // Кнопка удаления с подтверждением
+            html += " <a href='/delete?file=";
+            html += name;
+            html += "' onclick='return confirm(\"Delete ";
+            html += name;
+            html += "?\")'>[X]</a>";
+            html += "</li>";
+            count++;
+        }
+        file = root.openNextFile();
+    }
+    if (count >= 100) html += "<li>... (truncated)</li>";
+    return html;
+}
+
+bool sdDeleteFile(const String &filename) {
+    if (!sdReady) return false;
+
+    // Защита от удаления файлов вне корня
+    if (filename.indexOf("..") >= 0 || filename.indexOf("/") >= 0) {
+        Serial.println("Удаление отклонено: недопустимое имя");
+        return false;
     }
 
-    // Определяем тип карты
-    uint8_t cardType = SD.cardType();
-    Serial.print("Тип карты:          ");
-    if (cardType == CARD_MMC)  Serial.println("MMC");
-    else if (cardType == CARD_SD)   Serial.println("SDSC");
-    else if (cardType == CARD_SDHC) Serial.println("SDHC (Высокая емкость)");
-    else                            Serial.println("Неизвестный тип");
+    String path = "/" + filename;
+    if (!SD.exists(path)) {
+        Serial.printf("Файл не найден: %s\n", path.c_str());
+        return false;
+    }
 
-    // Получаем размеры
-    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    uint64_t totalBytes = SD.totalBytes() / (1024 * 1024);
-    uint64_t usedBytes = SD.usedBytes() / (1024 * 1024);
-
-    Serial.printf("Полный объем карты:  %llu МБ\n", cardSize);
-    Serial.printf("Общий объем FAT:     %llu МБ\n", totalBytes);
-    Serial.printf("Использовано:        %llu МБ\n", usedBytes);
-    Serial.printf("Свободно на карте:   %llu МБ\n", totalBytes - usedBytes);
-    Serial.println("---------------------------------------------");
+    if (SD.remove(path)) {
+        Serial.printf("Удалено: %s\n", path.c_str());
+        return true;
+    }
+    Serial.printf("Ошибка удаления: %s\n", path.c_str());
+    return false;
 }
