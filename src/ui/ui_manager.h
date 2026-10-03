@@ -2,27 +2,26 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 #include "ui_button.h"
+#include "ui_event.h" 
 
 #define MAX_BUTTONS 16
 
 class UIManager {
 public:
-    // Добавить кнопку в текущий экран
     void addButton(int x, int y, int w, int h,
                    const char* label, uint16_t color,
                    ButtonCallback callback);
 
-    // Очистить все кнопки (при смене экрана)
     void clearButtons();
 
-    // Главный цикл: читает тач, обрабатывает, рисует
-    void loop(Arduino_Canvas* gfx,
-              bool (*readTouch)(int&, int&),
-              void (*flush)());
+    // Нарисовать все кнопки
+    void draw(Arduino_Canvas* gfx);
 
+    // Обработать касание. Возвращает true, если попали в кнопку.
+    bool handleTouch(int x, int y, TouchEvent ev);
+    
 private:
     UIButton buttons[MAX_BUTTONS];
     int buttonCount = 0;
-    int activeButton = -1;   // индекс кнопки, на которой палец
-    bool lastTouched = false;
+    int activeButton = -1;
 };

@@ -12,37 +12,30 @@ void UIManager::clearButtons() {
     activeButton = -1;
 }
 
-void UIManager::loop(Arduino_Canvas* gfx,
-                     bool (*readTouch)(int&, int&),
-                     void (*flush)()) {
-    int tx = 0, ty = 0;
-    bool touched = readTouch(tx, ty);
-
-    // Отпускание: палец ушёл, а был на кнопке — вызвать RELEASED
-    if (!touched && activeButton >= 0) {
-        buttons[activeButton].isPressed = false;
-        if (buttons[activeButton].callback)
-            buttons[activeButton].callback(ButtonEvent::RELEASED);
-        activeButton = -1;
+void UIManager::draw(Arduino_Canvas* gfx) {
+    for (int i = 0; i < buttonCount; i++) {
+        buttons[i].draw(gfx);
     }
+}
 
-    // Новое касание
-    if (touched && activeButton < 0) {
+bool UIManager::handleTouch(int x, int y, TouchEvent ev) {
+    if (ev == TouchEvent::PRESSED) {
         for (int i = 0; i < buttonCount; i++) {
-            if (buttons[i].contains(tx, ty)) {
+            if (buttons[i].contains(x, y)) {
                 activeButton = i;
                 buttons[i].isPressed = true;
                 if (buttons[i].callback)
                     buttons[i].callback(ButtonEvent::PRESSED);
-                break;
+                return true;
             }
         }
     }
-
-    // Отрисовка
-    for (int i = 0; i < buttonCount; i++) {
-        buttons[i].draw(gfx);
+    else if (ev == TouchEvent::RELEASED && activeButton >= 0) {
+        buttons[activeButton].isPressed = false;
+        if (buttons[activeButton].callback)
+            buttons[activeButton].callback(ButtonEvent::RELEASED);
+        activeButton = -1;
+        return true;
     }
-
-    flush();
+    return false;
 }
