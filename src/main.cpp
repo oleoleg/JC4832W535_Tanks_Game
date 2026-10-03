@@ -11,6 +11,8 @@
 ScreenManager screens;
 MenuScreen* menuScreen = nullptr;
 static bool lastTouched = false;
+static int lastTx = -1;
+static int lastTy = -1;
 
 // Глобальная функция доступа к менеджеру (для заглушек экранов)
 ScreenManager* getScreenManager() {
@@ -54,15 +56,25 @@ void loop() {
     bool touched = readTouch(tx, ty);
 
     TouchEvent ev = TouchEvent::NONE;
-    if (touched && !lastTouched)  ev = TouchEvent::PRESSED;
-    if (!touched && lastTouched)  ev = TouchEvent::RELEASED;
+    if (touched && !lastTouched) {
+        ev = TouchEvent::PRESSED;
+    } else if (touched && lastTouched) {
+        // Палец на экране, проверяем — двигался ли
+        if (abs(tx - lastTx) > 2 || abs(ty - lastTy) > 2) {
+            ev = TouchEvent::MOVED;
+        }
+    } else if (!touched && lastTouched) {
+        ev = TouchEvent::RELEASED;
+    }
 
     if (ev != TouchEvent::NONE) {
         screens.handleTouch(tx, ty, ev);
     }
 
     lastTouched = touched;
-
+    lastTx = tx;
+    lastTy = ty;
+    
     screens.draw(gfx);
     flushDisplay();
     wifiLoop();

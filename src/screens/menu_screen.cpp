@@ -1,7 +1,7 @@
 #include "menu_screen.h"
 #include "screen_manager.h"
 
-// Заглушки — заменим позже реальными экранами
+// Экраны — заглушки, которые открывает меню
 #include "game_screen.h"
 #include "wifi_screen.h"
 #include "test_screen.h"
@@ -36,7 +36,6 @@ void MenuScreen::draw(Arduino_Canvas* gfx) {
         initialized = true;
     }
 
-    // Рисуем кнопки
     ui.draw(gfx);
 }
 

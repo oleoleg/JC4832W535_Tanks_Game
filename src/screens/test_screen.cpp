@@ -8,7 +8,7 @@ void TestScreen::draw(Arduino_Canvas* gfx) {
     gfx->setTextColor(LIGHTGREY);
     gfx->setTextSize(3);
     gfx->setCursor(140, 140);
-    gfx->print("WiFi");
+    gfx->print("test");
     gfx->setTextSize(1);
     gfx->setTextColor(WHITE);
     gfx->setCursor(140, 180);
