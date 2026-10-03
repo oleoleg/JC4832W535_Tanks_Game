@@ -10,3 +10,8 @@
 # OS
 .DS_Store
 Thumbs.db
+
+
+# Временные файлы установщика драйверов
+idf-env.exe
+idf-driver-*.zip
