@@ -21,6 +21,7 @@ ScreenManager* getScreenManager() {
 
 void setup() {
     Serial.begin(115200);
+    randomSeed(esp_random());   // энтропия от железа
     delay(500);
 
     if (!initDisplayTouch()) {
@@ -75,6 +76,7 @@ void loop() {
     lastTx = tx;
     lastTy = ty;
     
+    screens.update();
     screens.draw(gfx);
     flushDisplay();
     wifiLoop();

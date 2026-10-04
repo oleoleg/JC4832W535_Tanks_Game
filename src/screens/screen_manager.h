@@ -23,6 +23,8 @@ public:
     // Обработать касание на текущем экране
     bool handleTouch(int x, int y, TouchEvent ev);
 
+    void update();
+
 private:
     Screen* stack[MAX_SCREEN_STACK];
     int depth = 0;

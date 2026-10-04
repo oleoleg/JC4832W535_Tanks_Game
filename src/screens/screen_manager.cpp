@@ -45,3 +45,7 @@ bool ScreenManager::handleTouch(int x, int y, TouchEvent ev) {
     if (depth > 0) return stack[depth - 1]->handleTouch(x, y, ev);
     return false;
 }
+
+void ScreenManager::update() {
+    if (depth > 0) stack[depth - 1]->update();
+}

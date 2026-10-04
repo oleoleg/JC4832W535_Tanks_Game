@@ -3,6 +3,7 @@
 #include <Arduino_GFX_Library.h>
 #include "../ui/ui_event.h"  
 
+
 // Базовый класс для всех экранов приложения.
 // Каждый экран реализует эти методы по-своему.
 class Screen {
@@ -24,5 +25,8 @@ public:
 
     // Имя экрана (для отладки)
     virtual const char* name() const { return "Screen"; }
-    
+
+    // Вызывается каждый кадр ПЕРЕД draw — для обновления состояния
+    virtual void update() {}
+
 };
