@@ -1,5 +1,6 @@
 #include "menu_screen.h"
 #include "screen_manager.h"
+#include "select_map_screen.h"
 
 // Экраны — заглушки, которые открывает меню
 #include "game_screen.h"
@@ -7,7 +8,6 @@
 #include "test_screen.h"
 
 // Глобальные экземпляры (создаются при первом входе)
-static Screen* gameScreen = nullptr;
 static Screen* wifiScreen = nullptr;
 static Screen* testScreen = nullptr;
 
@@ -47,8 +47,9 @@ bool MenuScreen::handleTouch(int x, int y, TouchEvent ev) {
 
 void MenuScreen::onGame(ButtonEvent ev) {
     if (ev != ButtonEvent::RELEASED) return;
-    if (!gameScreen) gameScreen = new GameScreen();
-    gManager->push(gameScreen);
+    static SelectMapScreen* selScreen = nullptr;
+    if (!selScreen) selScreen = new SelectMapScreen();
+    gManager->push(selScreen);
 }
 
 void MenuScreen::onDoorbell(ButtonEvent ev) {

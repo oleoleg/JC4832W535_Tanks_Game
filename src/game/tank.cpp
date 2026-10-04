@@ -23,17 +23,19 @@ void Tank::stop() {
 }
 
 void Tank::update(const GameMap* map) {
+
+    blocked = false;
     // === Плавный поворот к targetAngle ===
     float diff = targetAngle - currentAngle;
     while (diff >  180) diff -= 360;
     while (diff < -180) diff += 360;
 
-    if (fabs(diff) < ROTATION_SPEED) {
+    if (fabs(diff) < rotationSpeed) {
         currentAngle = targetAngle;
     } else if (diff > 0) {
-        currentAngle += ROTATION_SPEED;
+        currentAngle += rotationSpeed;
     } else {
-        currentAngle -= ROTATION_SPEED;
+        currentAngle -= rotationSpeed;
     }
     if (currentAngle >= 360) currentAngle -= 360;
     if (currentAngle < 0)    currentAngle += 360;
@@ -46,7 +48,7 @@ void Tank::update(const GameMap* map) {
         float newX = x + cosf(rad) * step;
         float newY = y + sinf(rad) * step;
 
-        float hw = SIZE / 2.0f;
+        float hw = COLLISION_SIZE / 2.0f;
 
         // Попробовать движение целиком
         if (!map->isSolidRect((int)(newX - hw), (int)(newY - hw),
@@ -74,10 +76,12 @@ void Tank::draw(Arduino_Canvas* gfx) const {
     float c = cosf(rad);
     float s = sinf(rad);
 
-    float hw = SIZE / 2.0f;
+    float hl = LENGTH / 2.0f;   // вдоль ствола
+    float hw = WIDTH  / 2.0f;   // поперёк ствола
 
-    // 4 угла корпуса в локальных координатах
-    float lx[4] = { -hw,  hw,  hw, -hw };
+    // 4 угла корпуса в локальных координатах:
+    // X — вдоль ствола (LENGTH), Y — поперёк (WIDTH)
+    float lx[4] = { -hl,  hl,  hl, -hl };
     float ly[4] = { -hw, -hw,  hw,  hw };
 
     int px[4], py[4];
@@ -97,8 +101,8 @@ void Tank::draw(Arduino_Canvas* gfx) const {
     gfx->drawLine(px[3], py[3], px[0], py[0], WHITE);
 
     // Ствол — линия от центра вперёд
-    int bx = (int)x + (int)(c * (hw + 6));
-    int by = (int)y + (int)(s * (hw + 6));
+    int bx = (int)x + (int)(c * (hl + 6));
+    int by = (int)y + (int)(s * (hl + 6));
     gfx->drawLine((int)x,     (int)y,     bx,     by, WHITE);
     gfx->drawLine((int)x + 1, (int)y,     bx + 1, by, WHITE);
 }

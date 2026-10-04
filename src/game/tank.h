@@ -10,7 +10,8 @@ public:
     void setSpeedFactor(float f) { speedFactor = f; }
     float getSpeedFactor() const { return speedFactor; }
     void setPosition(int px, int py);
-
+    void setRotationSpeed(float s) { rotationSpeed = s; }
+    
     // Управление
     void setTargetAngle(float angleDeg);   // куда хочется повернуть
     void setMoving(bool m) { moving = m; }
@@ -36,8 +37,10 @@ private:
 
     // Параметры (легко подкрутить)
     static constexpr float SPEED          = 2.0f;   // пикселей за кадр
-    static constexpr float ROTATION_SPEED = 6.0f;   // градусов за кадр
-    static constexpr int   SIZE           = 20;     // сторона корпуса
+     float rotationSpeed = 6.0f;   // градусов за кадр
+    static constexpr int   WIDTH          = 16;   // поперёк ствола
+    static constexpr int   LENGTH         = 20;   // вдоль ствола
+    static constexpr int   COLLISION_SIZE = 18;   // квадрат коллизии
 
     // Границы игрового поля
     static constexpr int FIELD_LEFT   = 5;
