@@ -3,6 +3,30 @@
 #include "../game/tank.h"
 #include "../game/bullet.h"
 #include "../game/game_map.h"
+#include "../game/rocket.h"
+
+
+enum TankType {
+    T_BASIC = 0,
+    T_FAST,
+    T_HEAVY,
+    T_SNIPER,
+    T_BOSS,
+    T_KATYUSHA,
+    T_COUNT
+};
+
+struct TankTypeInfo {
+    const char* name;
+    uint16_t    color;
+    int         hp;
+    float       typeSpeed;
+    int         points;
+    uint32_t    fireDelay;
+};
+
+extern const TankTypeInfo TANK_TYPES[T_COUNT];
+
 
 class GameScreen : public Screen {
 public:
@@ -15,17 +39,30 @@ public:
     static GameScreen* getInstance();
     static String selectedMapPath;   // выбранная карта ("" = дефолт)
 private:
-    static constexpr int MAX_ENEMIES   = 6;
-    static constexpr int TOTAL_ENEMIES = 12;
+    static constexpr int MAX_ENEMIES   = 20;
+ 
     int nextSpawnIndex = 0;
     int spawnedCount = 0;   // сколько всего заспавнено с начала уровня
+
+    int  score = 0;
+    int  enemiesTotal = 15;
+    int  remainingTypeCount[T_COUNT] = {15, 0, 0, 0, 0};
     
+
     struct Enemy {
-        Tank*    tank   = nullptr;
-        Bullet*  bullet = nullptr;
-        uint32_t nextAi = 0;
+        Tank*    tank    = nullptr;
+        Bullet*  bullet  = nullptr;
+        uint32_t nextAi  = 0;
         uint32_t nextFire = 0;
-        bool     alive  = false;
+        bool     alive   = false;
+        int      hp      = 1;
+        int      maxHp   = 1;
+        int      points  = 0;
+        int      katyushaState = 0;    // 0=нет, 1=въезжает, 2=стреляет, 3=уезжает
+        uint32_t katyushaTimer = 0;
+        int      rocketsFired = 0;
+        int      rocketsTotal = 4;
+        int      katyushaTargetX = 0;
     };
 
     // --- Игровые объекты ---
@@ -36,7 +73,7 @@ private:
 
     // --- Состояние ---
     int  lives            = 3;
-    int  enemiesRemaining = TOTAL_ENEMIES;
+    int  enemiesRemaining = 10;
     bool gameOver         = false;
     bool victory          = false;
     bool enemiesInit      = false;
@@ -67,6 +104,7 @@ private:
     static constexpr int AUTO_H = 34;
 
     // Вспомогательные
+    int  pickNextType();
     void initEnemies();
     void resetLevel();
     void spawnEnemy(int slot);
@@ -81,4 +119,17 @@ private:
     bool inCircle(int x, int y, int cx, int cy, int r) const;
     const char* angleToText() const;
     void drawHUD(Arduino_Canvas* gfx);
+
+    Rocket  rockets[Rocket::MAX_ROCKETS];
+    int     maxOnField = 3;      // из карты
+    int     katyushaRemaining = 0;
+    uint32_t nextKatyushaTime = 0;
+    int katyushaMax = 0;   // сколько одновременно
+    
+
+    void    updateKatyusha(Enemy& e, uint32_t now);
+    void    launchRocketBarrage(Enemy& e);
+    void    updateRockets(uint32_t now);
+    bool    spawnKatyusha(); 
+
 };

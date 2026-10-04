@@ -7,6 +7,11 @@
 // как комментарии, что позволяет писать пояснения прямо в файле.
 // ============================================================
 static const char* DEFAULT_MAP_STR[] = {
+    "!MAX_ENEMIES 3",
+    "!BASIC 10",
+    "!FAST 2",
+    "!HEAVY 2",
+    "!KATYUSHA 1",
     "#  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #",
     "#  .  .  E  .  .  .  .  .  E  .  .  .  .  .  E  .  .  .  .  .  .  #",
     "#  .  .  .  #  #  #  .  .  .  .  .  .  .  #  #  .  .  .  .  .  .  #",
@@ -50,6 +55,9 @@ void GameMap::initParsed(ParsedMap& pm) const {
         for (int c = 0; c < COLS; c++)
             pm.tiles[r][c] = Tile::EMPTY;
 
+    for (int i = 0; i < MAX_TYPES; i++) pm.typeCounts[i] = 0;
+    pm.configFound = false;
+
     pm.playerStartSet = false;
     pm.playerStartX = 240;
     pm.playerStartY = 185;
@@ -59,6 +67,7 @@ void GameMap::initParsed(ParsedMap& pm) const {
     pm.baseRow = -1;
 
     pm.spawnCount = 0;
+    pm.maxEnemies = 3;
 }
 
 
@@ -69,6 +78,13 @@ void GameMap::initParsed(ParsedMap& pm) const {
 //   • Если табов нет — пробелы схлопываются (несколько пробелов = один разделитель).
 //   • Строка с < 10 токенов считается комментарием и пропускается.
 bool GameMap::parseLine(const String& line, int row, ParsedMap& out) const {
+
+    // Строки-команды
+    if (line.startsWith("!")) {
+        parseConfig(line, out);
+        return false;   // не строка карты
+    }
+
     char tokens[COLS + 1];
     int  count = 0;
     int  len = line.length();
@@ -136,7 +152,50 @@ bool GameMap::parseLine(const String& line, int row, ParsedMap& out) const {
 }
 
 
+void GameMap::parseConfig(const String& line, ParsedMap& out) const {
+    String s = line.substring(1);
+    s.trim();
+
+    // Ищем первый разделитель — пробел ИЛИ таб
+    int sp = -1;
+    for (int i = 0; i < (int)s.length(); i++) {
+        if (s[i] == ' ' || s[i] == '\t') { sp = i; break; }
+    }
+    if (sp < 0) return;
+
+    String key = s.substring(0, sp);
+    key.toUpperCase();
+
+    String valStr = s.substring(sp + 1);
+    valStr.trim();
+    int val = valStr.toInt();
+    if (val < 0) val = 0;
+
+    if      (key == "BASIC")       out.typeCounts[0] = val;
+    else if (key == "FAST")        out.typeCounts[1] = val;
+    else if (key == "HEAVY")       out.typeCounts[2] = val;
+    else if (key == "SNIPER")      out.typeCounts[3] = val;
+    else if (key == "BOSS")        out.typeCounts[4] = val;
+    else if (key == "MAX_ENEMIES") out.maxEnemies = val;
+    else if (key == "KATYUSHA")    out.typeCounts[5] = val;
+    else return;
+
+    out.configFound = true;
+    Serial.printf("Конфиг: %s = %d\n", key.c_str(), val);
+}
+
 bool GameMap::applyParsed(const ParsedMap& pm) {
+ 
+    
+    
+    if (pm.configFound) {
+        for (int i = 0; i < MAX_TYPES; i++) typeCounts[i] = pm.typeCounts[i];
+    } else {
+        // По умолчанию: 15 BASIC
+        for (int i = 0; i < MAX_TYPES; i++) typeCounts[i] = 0;
+        typeCounts[0] = 15;
+    }
+ 
     // Проверка, что все строки заполнены (иначе откат)
     // Тут уже доверяем парсеру
 
@@ -164,6 +223,11 @@ bool GameMap::applyParsed(const ParsedMap& pm) {
         spawnX[i] = pm.spawnX[i];
         spawnY[i] = pm.spawnY[i];
     }
+
+    maxOnField = pm.maxEnemies;
+    katyushaCount = pm.typeCounts[5];
+
+
     return true;
 }
 
@@ -357,3 +421,9 @@ void GameMap::draw(Arduino_Canvas* gfx) const {
         }
     }
 }
+
+
+void GameMap::getEnemyTypeCounts(int out[MAX_TYPES]) const {
+    for (int i = 0; i < MAX_TYPES; i++) out[i] = typeCounts[i];
+}
+

@@ -35,6 +35,10 @@ public:
     bool isSolidRect(int x1, int y1, int x2, int y2) const;
     bool destroyAt(int x, int y);
 
+    int getMaxEnemies() const { return maxOnField; }
+    int getKatyushaCount() const { return katyushaCount; }
+
+
     // Тип тайла в точке (для проверки льда/тумана)
     Tile tileAt(int x, int y) const;
 
@@ -52,6 +56,11 @@ public:
     int  getSpawnCount() const { return spawnCount; }
     void getSpawnPoint(int i, int& outX, int& outY) const;
 
+
+    static constexpr int MAX_TYPES = 6;
+    void getEnemyTypeCounts(int out[MAX_TYPES]) const;
+
+
 private:
     // Промежуточная структура — заполняется парсером, потом применяется
     struct ParsedMap {
@@ -63,6 +72,9 @@ private:
         int  spawnX[MAX_SPAWNS];
         int  spawnY[MAX_SPAWNS];
         int  spawnCount;
+        int  typeCounts[MAX_TYPES];
+        bool configFound;
+        int  maxEnemies;
     };
 
     Tile tiles[ROWS][COLS];
@@ -79,6 +91,9 @@ private:
     int spawnY[MAX_SPAWNS];
     int spawnCount = 0;
 
+    int maxOnField = 3;
+    int katyushaCount = 0;
+
     bool inBounds(int col, int row) const;
     void clearSpecialPoints();
     void initParsed(ParsedMap& pm) const;
@@ -87,4 +102,7 @@ private:
     // Парсит одну строку карты. Возвращает true, если строка похожа на строку карты
     // (>= 10 токенов) и была обработана.
     bool parseLine(const String& line, int row, ParsedMap& out) const;
+
+    void parseConfig(const String& line, ParsedMap& out) const;
+    int typeCounts[MAX_TYPES] = {15, 0, 0, 0, 0};
 };

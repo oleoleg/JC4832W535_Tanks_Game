@@ -4,6 +4,28 @@
 #include "config.h"
 #include <math.h>
 
+
+const TankTypeInfo TANK_TYPES[T_COUNT] = {
+    // name      color     hp  speed  pts   fire
+    { "BASIC",   RED,      1,  1.0f,  100,  2000 },
+    { "FAST",    MAGENTA,  1,  1.8f,  200,  2500 },
+    { "HEAVY",   NAVY,     3,  0.7f,  300,  2200 },
+    { "SNIPER",  CYAN,     1,  1.0f,  400,  1200 },
+    { "BOSS",    LIGHTGREY,5,  0.6f,  1000, 1500 },
+    { "KATYUSHA", ORANGE,  1,  0.6f,  800,  0 },
+};
+
+static int angleToCenter(float fromX, float fromY) {
+    float cx = GameMap::ORIGIN_X + GameMap::COLS * GameMap::TILE_SIZE / 2.0f;
+    float cy = GameMap::ORIGIN_Y + GameMap::ROWS * GameMap::TILE_SIZE / 2.0f;
+    float rad = atan2f(cy - fromY, cx - fromX);
+    int deg = (int)(rad * 180.0f / PI);
+    if (deg < 0) deg += 360;
+    return deg;
+}
+
+
+
 GameScreen* GameScreen::getInstance() {
     static GameScreen instance;
     return &instance;
@@ -38,27 +60,41 @@ void GameScreen::onEnter() {
 }
 
 void GameScreen::resetLevel() {
-    lives            = 3;
-     spawnedCount = 0;
-    enemiesRemaining = TOTAL_ENEMIES;
-    gameOver         = false;
-    victory          = false;
-    autoFire         = false;
+    lives   = 3;
+    score   = 0;
+    spawnedCount = 0;
+    gameOver  = false;
+    victory   = false;
+    autoFire  = false;
 
     // Сброс флага разрушения базы
     // (это делает applyParsed, но на всякий случай)
 
+    // Загрузка карты
     bool loaded = false;
     if (selectedMapPath.length() > 0) {
         loaded = map.loadFromFile(selectedMapPath.c_str());
-        if (!loaded) {
-            Serial.printf("Не удалось загрузить %s, дефолт\n",
-                          selectedMapPath.c_str());
-        }
     }
-    if (!loaded) {
-        map.loadDefault();
+    if (!loaded) map.loadDefault();
+
+
+    // Состав врагов
+    int counts[T_COUNT];
+    map.getEnemyTypeCounts(counts);
+    enemiesTotal = 0;
+   for (int i = 0; i < T_COUNT - 1; i++) {   // БЕЗ KATYUSHA
+        remainingTypeCount[i] = counts[i];
+        enemiesTotal += counts[i];
     }
+    remainingTypeCount[T_KATYUSHA] = 0;   // в основном счёте не участвует
+    katyushaMax = counts[T_KATYUSHA];   // максимум одновременно
+    maxOnField = map.getMaxEnemies();
+    Serial.printf("Состав врагов: ");
+    for (int i = 0; i < T_COUNT; i++) {
+        Serial.printf("%s=%d ", TANK_TYPES[i].name, counts[i]);
+    }
+    Serial.printf("(всего %d)\n", enemiesTotal);
+
 
     // Игрок — на позиции из карты или в центре
     if (map.hasPlayerStart()) {
@@ -71,12 +107,25 @@ void GameScreen::resetLevel() {
     playerBullet.deactivate();
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        enemies[i].alive = false;
+        enemies[i].alive            = false;
+        enemies[i].katyushaState    = 0;
+        enemies[i].katyushaTargetX  = 0;
+        enemies[i].katyushaTimer    = 0;
+        enemies[i].rocketsFired     = 0;
+        enemies[i].hp               = 0;
+        enemies[i].points           = 0;
         enemies[i].bullet->deactivate();
+        enemies[i].tank->reset(90);
         enemies[i].tank->setRotationSpeed(6.0f);
     }
 
+    for (int i = 0; i < Rocket::MAX_ROCKETS; i++) {
+        rockets[i].deactivate();
+    }
+
     lastSpawnTime = 0;
+    nextKatyushaTime = millis() + 6000;   // первая Катюша через 6 секунд
+
     trySpawnWave();
 }
 
@@ -87,9 +136,9 @@ void GameScreen::update() {
     // = не заспавнены + живые сейчас
     int aliveCount = 0;
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (enemies[i].alive) aliveCount++;
+        if (enemies[i].alive && enemies[i].katyushaState == 0) aliveCount++;
     }
-    enemiesRemaining = TOTAL_ENEMIES - (spawnedCount - aliveCount);
+    enemiesRemaining = enemiesTotal - (spawnedCount - aliveCount);
 
     if (enemiesRemaining <= 0 && !gameOver) {
         victory = true;
@@ -156,26 +205,80 @@ void GameScreen::update() {
     trySpawnWave();
 
     
+      // === Спавн Катюши ===
+    if (katyushaMax > 0 && millis() >= nextKatyushaTime) {
+        // Считаем активных
+        int activeKatyusha = 0;
+        for (int i = 0; i < MAX_ENEMIES; i++) {
+            if (enemies[i].alive && enemies[i].katyushaState != 0) activeKatyusha++;
+        }
+
+        if (activeKatyusha < katyushaMax) {
+            // Спавним до 2 за раз, чтобы они появлялись кучнее
+            int spawnedNow = 0;
+            while (activeKatyusha < katyushaMax && spawnedNow < 2) {
+                if (!spawnKatyusha()) break;
+                activeKatyusha++;
+                spawnedNow++;
+            }
+
+            // Интервал зависит от katyushaMax:
+            //  1 → ~15-20 сек
+            //  3 → ~7-10 сек
+            //  5 → ~4-6 сек
+            // 10 → ~2-3 сек
+            uint32_t base = 20000 / katyushaMax;
+            if (base < 2000) base = 2000;   // минимум 2 сек
+            uint32_t jitter = base / 3;
+            nextKatyushaTime = millis() + base + random(jitter * 2) - jitter;
+        } else {
+            // На поле уже максимум — проверяем через 1 сек
+            nextKatyushaTime = millis() + 1000;
+        }
+    }
+
+        // === Ракеты ===
+    updateRockets(millis());
+
     // === Проверка попаданий ===
     checkBulletHits();
 }
 
 void GameScreen::trySpawnWave() {
     if (gameOver || victory) return;
-    if (spawnedCount >= TOTAL_ENEMIES) return;
 
-    // Свободный слот
+    int aliveCount = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].alive && enemies[i].katyushaState == 0) aliveCount++;
+    }
+
+
+// ОТЛАДКА — покажет реальные цифры
+    static uint32_t lastPrint = 0;
+    if (millis() - lastPrint > 1000) {
+        Serial.printf("[trySpawn] alive=%d, maxOnField=%d, spawned=%d/%d\n",
+                      aliveCount, maxOnField, spawnedCount, enemiesTotal);
+        lastPrint = millis();
+    }
+
+    if (aliveCount >= maxOnField) return;
+    if (spawnedCount >= enemiesTotal) return;
+
     int freeSlot = -1;
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].alive) { freeSlot = i; break; }
     }
     if (freeSlot < 0) return;
 
-    // Задержка 1-4 сек
     if (lastSpawnTime != 0) {
         uint32_t delay = 1000 + random(3000);
         if (millis() - lastSpawnTime < delay) return;
     }
+
+
+    //if (aliveCount >= maxOnField && maxOnField > 0) return;
+   //if (aliveCount >= 6) return;   // жёсткий кап на всякий случай
+
 
     spawnEnemy(freeSlot);
 }
@@ -183,49 +286,55 @@ void GameScreen::trySpawnWave() {
 void GameScreen::spawnEnemy(int slot) {
     if (slot < 0 || slot >= MAX_ENEMIES) return;
 
+    int typeIdx = pickNextType();
+    if (typeIdx < 0) return;
+
+    const TankTypeInfo& info = TANK_TYPES[typeIdx];
+
     int spawnN = map.getSpawnCount();
-    if (spawnN <= 0) {
-        Serial.println("Спавн: нет точек E на карте!");
-        return;
-    }
+    if (spawnN <= 0) return;
 
-    // Идём по точкам по кругу, начиная с (spawnedCount % spawnN)
     int start = spawnedCount % spawnN;
-
     for (int k = 0; k < spawnN; k++) {
         int p = (start + k) % spawnN;
-
         int sx, sy;
         map.getSpawnPoint(p, sx, sy);
 
-        float hw = 10.0f;
-        if (map.isSolidRect((int)(sx-hw), (int)(sy-hw),
-                            (int)(sx+hw), (int)(sy+hw))) continue;
+        if (map.isSolid(sx, sy)) continue;
         if (isTankAt(sx, sy, slot)) continue;
 
         float dx = sx - player.getX();
         float dy = sy - player.getY();
         if (dx*dx + dy*dy < 900) continue;
 
+        // Настраиваем танк
+        int ang = angleToCenter(sx, sy); 
         enemies[slot].tank->setPosition(sx, sy);
-        enemies[slot].tank->setTargetAngle(90);
+        enemies[slot].tank->reset(ang);
+        enemies[slot].tank->setTargetAngle(ang);  
         enemies[slot].tank->setMoving(true);
+        enemies[slot].tank->setColor(info.color);
+        enemies[slot].tank->setTypeSpeed(info.typeSpeed);
+        enemies[slot].tank->setRotationSpeed(typeIdx == T_FAST ? 10.0f : 6.0f);
+
         enemies[slot].bullet->deactivate();
         enemies[slot].nextAi   = millis() + 500;
         enemies[slot].nextFire = millis() + 1000 + random(1500);
         enemies[slot].alive    = true;
+        enemies[slot].hp       = info.hp;
+        enemies[slot].maxHp    = info.hp;
+        enemies[slot].points   = info.points;
 
         spawnedCount++;
         lastSpawnTime = millis();
 
-        Serial.printf("Спавн: слот %d, точка %d/%d, всего %d/%d\n",
-                      slot, p + 1, spawnN, spawnedCount, TOTAL_ENEMIES);
+        Serial.printf("Спавн: %s (HP=%d) слот %d, точка %d/%d\n",
+                      info.name, info.hp, slot, p + 1, spawnN);
         return;
     }
-
-    Serial.println("Спавн: все точки заняты/заблокированы");
+    // Не нашли место — вернём тип обратно
+    remainingTypeCount[typeIdx]++;
 }
-
 
 bool GameScreen::isTankAt(float x, float y, int exceptSlot) const {
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -244,6 +353,11 @@ void GameScreen::updateEnemyAI() {
         if (!enemies[i].alive) continue;
         Enemy& e = enemies[i];
 
+        if (e.katyushaState != 0) {
+            updateKatyusha(e, now);
+            continue;   // Катюша не подчиняется обычному ИИ
+        }
+
         // Упёрся в стену — сразу новое направление
         if (e.tank->wasBlocked()) {
             int newDir = chooseSmartDirection(*e.tank);
@@ -260,8 +374,10 @@ void GameScreen::updateEnemyAI() {
 
         // Стрельба
         if (now >= e.nextFire && !e.bullet->isActive()) {
-            e.bullet->fire(e.tank->getX(), e.tank->getY(),
-                           e.tank->getAngle());
+            e.bullet->fire(e.tank->getX(), e.tank->getY(), e.tank->getAngle());
+            uint32_t base = TANK_TYPES[T_BASIC].fireDelay;
+            // Найдём тип по цвету/ссылке — проще хранить в Enemy
+            // Здесь используем фиксированный интервал
             e.nextFire = now + 1500 + random(2000);
         }
     }
@@ -320,20 +436,26 @@ void GameScreen::checkBulletHits() {
     const float HIT_SQ    = (TANK_HALF + BULLET_R) * (TANK_HALF + BULLET_R);
 
     // === Снаряд игрока → враги ===
-    if (playerBullet.isActive()) {
+     if (playerBullet.isActive()) {
         for (int i = 0; i < MAX_ENEMIES; i++) {
             if (!enemies[i].alive) continue;
             float dx = playerBullet.getX() - enemies[i].tank->getX();
             float dy = playerBullet.getY() - enemies[i].tank->getY();
             if (dx*dx + dy*dy < HIT_SQ) {
                 playerBullet.deactivate();
-                enemies[i].alive = false;
-                enemies[i].bullet->deactivate();
-                
-                Serial.printf("Враг уничтожен! Осталось: %d\n", enemiesRemaining);
+                enemies[i].hp--;
 
-                if (enemiesRemaining <= 0) {
-                    victory = true;
+                if (enemies[i].hp <= 0) {
+                    enemies[i].alive = false;
+                    enemies[i].bullet->deactivate();
+                    enemies[i].tank->reset(90);  
+                    enemies[i].katyushaState = 0;  
+                    enemies[i].katyushaTargetX = 0;
+                    score += enemies[i].points;
+                    Serial.printf("Враг уничтожен! +%d очков (всего %d)\n",
+                                  enemies[i].points, score);
+                } else {
+                    Serial.printf("Попадание! HP врага: %d\n", enemies[i].hp);
                 }
                 return;
             }
@@ -357,9 +479,15 @@ void GameScreen::checkBulletHits() {
                 return;
             }
 
-            // Респавн игрока
-            player.setPosition(240, 185);
+            // Респавн игрока — в точке P из карты
+            if (map.hasPlayerStart()) {
+                player.setPosition(map.getPlayerStartX(), map.getPlayerStartY());
+            } else {
+                player.setPosition(240, 185);
+            }
             player.stop();
+            player.setTargetAngle(player.getAngle());   // фиксируем текущий угол
+            player.setSpeedFactor(1.0f);                // сброс скорости
             return;
         }
     }
@@ -380,7 +508,22 @@ void GameScreen::draw(Arduino_Canvas* gfx) {
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].alive) continue;
-        enemies[i].tank->draw(gfx);
+
+        // Туман: скрываем врага, если он на клетке FOG
+        Tile t = map.tileAt((int)enemies[i].tank->getX(),
+                            (int)enemies[i].tank->getY());
+        if (t == Tile::FOG) {
+            // Полупрозрачная подсказка — просто точка
+            gfx->fillCircle((int)enemies[i].tank->getX(),
+                            (int)enemies[i].tank->getY(), 2, DARKGREY);
+            continue;
+        }
+        
+        if (enemies[i].katyushaState != 0) {
+            enemies[i].tank->drawKatyusha(gfx);
+        } else {
+            enemies[i].tank->draw(gfx);
+        }
     }
 
     player.draw(gfx);
@@ -410,6 +553,12 @@ void GameScreen::draw(Arduino_Canvas* gfx) {
     if (showFireIndicator) {
         gfx->drawCircle(FIRE_CX, FIRE_CY, FIRE_R, DARKGREY);
         gfx->fillCircle(fireIndicatorX, fireIndicatorY, 8, RED);
+    }
+
+
+    // Ракеты — поверх всего игрового поля
+    for (int i = 0; i < Rocket::MAX_ROCKETS; i++) {
+        rockets[i].draw(gfx);
     }
 
     // === HUD ===
@@ -445,15 +594,29 @@ void GameScreen::drawHUD(Arduino_Canvas* gfx) {
 
     // Счётчик врагов
     gfx->setTextColor(YELLOW);
+    gfx->setTextSize(1);
+    gfx->setCursor(150, 20);
+    gfx->print("E:");
     gfx->setTextSize(2);
-    gfx->setCursor(150, 15);
-    gfx->print("ENEMY: ");
+    gfx->setCursor(165, 18);
     gfx->print(enemiesRemaining);
+
+    // Очки
+    gfx->setTextColor(WHITE);
+    gfx->setTextSize(1);
+    gfx->setCursor(210, 20);
+    gfx->print("SCORE:");
+    gfx->setTextSize(2);
+    gfx->setCursor(250, 18);
+    gfx->print(score);
 
     // Жизни
     gfx->setTextColor(RED);
-    gfx->setCursor(370, 15);
-    gfx->print("HP: ");
+    gfx->setTextSize(1);
+    gfx->setCursor(400, 20);
+    gfx->print("HP:");
+    gfx->setTextSize(2);
+    gfx->setCursor(420, 18);
     gfx->print(lives);
 
     // Кнопка AUTO рядом с BACK
@@ -573,3 +736,206 @@ const char* GameScreen::angleToText() const {
     if (moveAngle < 292) return "UP";
     return "UP-RIGHT";
 }
+
+
+int GameScreen::pickNextType() {
+    int totalRemaining = 0;
+    for (int i = 0; i < T_COUNT; i++) totalRemaining += remainingTypeCount[i];
+    if (totalRemaining == 0) return -1;
+
+    int pick = random(totalRemaining);
+    for (int i = 0; i < T_COUNT; i++) {
+        if (pick < remainingTypeCount[i]) {
+            remainingTypeCount[i]--;
+            return i;
+        }
+        pick -= remainingTypeCount[i];
+    }
+    return -1;
+}
+
+bool GameScreen::spawnKatyusha() {
+    // Найти свободный слот
+    int slot = -1;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].alive) { slot = i; break; }
+    }
+    if (slot < 0) return false;
+
+    Enemy& e = enemies[slot];
+    const TankTypeInfo& info = TANK_TYPES[T_KATYUSHA];
+
+    // Въезжает слева или справа, на уровне середины поля
+    bool fromLeft = random(2) == 0;
+    int y = GameMap::ORIGIN_Y + 4 * GameMap::TILE_SIZE + random(4) * GameMap::TILE_SIZE;
+
+    float startX, startY, targetX;
+
+    if (fromLeft) {
+        startX  = GameMap::ORIGIN_X + GameMap::TILE_SIZE * 0.5f;
+        targetX = GameMap::ORIGIN_X + GameMap::TILE_SIZE * 3.0f;
+    } else {
+        startX  = GameMap::ORIGIN_X + (GameMap::COLS - 0.5f) * GameMap::TILE_SIZE;
+        targetX = GameMap::ORIGIN_X + (GameMap::COLS - 3.0f) * GameMap::TILE_SIZE;
+    }
+    startY = y;
+
+    e.tank->setPosition((int)startX, (int)startY);
+    e.tank->reset(fromLeft ? 0 : 180);
+    e.tank->setTargetAngle(fromLeft ? 0 : 180);
+    e.tank->setMoving(true);
+    e.tank->setColor(info.color);
+    e.tank->setTypeSpeed(info.typeSpeed);
+    e.tank->setRotationSpeed(4.0f);
+
+    e.bullet->deactivate();
+    e.alive = true;
+    e.hp = info.hp;
+    e.maxHp = info.hp;
+    e.points = info.points;
+
+    e.katyushaState  = 1;              // въезжает
+    e.katyushaTimer  = millis();
+    e.rocketsFired   = 0;
+    e.rocketsTotal   = 3 + random(3);  // 3-5 ракет
+
+    // Сохраняем целевую X во временном поле nextAi
+    // (нет, лучше в отдельном поле)
+    // ... см. ниже
+
+    e.katyushaTargetX = targetX;
+ 
+    Serial.println("Катюша выехала!");
+    return true;
+}
+
+void GameScreen::updateKatyusha(Enemy& e, uint32_t now) {
+    const int leftEdge  = GameMap::ORIGIN_X - 25;
+    const int rightEdge = GameMap::ORIGIN_X
+                        + GameMap::COLS * GameMap::TILE_SIZE + 25;
+
+    switch (e.katyushaState) {
+
+        // 1. Въезжает. Таймаут 2 сек → всё равно стреляет
+        case 1: {
+            float cx = e.tank->getX();
+            float dx = e.katyushaTargetX - cx;
+            bool arrived = (fabs(dx) < 4.0f);
+            bool timeout = (now - e.katyushaTimer > 2000);
+
+            if (arrived || timeout) {
+                e.tank->stop();
+                e.katyushaState = 2;
+                e.katyushaTimer = now;
+                Serial.printf("Катюша: %s, готов к залпу\n",
+                              arrived ? "доехала" : "таймаут въезда");
+            }
+            break;
+        }
+
+        // 2. Стоит 400 мс и делает залп, потом уезжает
+        case 2: {
+            if (now - e.katyushaTimer < 400) break;
+
+            for (int k = 0; k < e.rocketsTotal; k++) {
+                launchRocketBarrage(e);
+            }
+            Serial.printf("Катюша: залп %d ракет\n", e.rocketsTotal);
+
+            // Разворот к ближайшему краю
+            float cx = e.tank->getX();
+            float centerX = GameMap::ORIGIN_X
+                          + (GameMap::COLS * GameMap::TILE_SIZE) / 2.0f;
+            int outAngle = (cx < centerX) ? 180 : 0;
+
+            e.tank->setTargetAngle(outAngle);
+            e.tank->setMoving(true);
+            e.katyushaState = 3;
+            e.katyushaTimer = now;
+            break;
+        }
+
+        // 3. Уезжает. Отъехала за край → скрыть.
+        //    Или застряла (3 сек) → тоже скрыть.
+        case 3: {
+            float cx = e.tank->getX();
+            bool offMap  = (cx < leftEdge || cx > rightEdge);
+            bool timeout = (now - e.katyushaTimer > 3000);
+
+            if (offMap || timeout) {
+                e.alive = false;
+                e.katyushaState = 0;
+                Serial.printf("Катюша уехала (%s)\n",
+                              offMap ? "за край" : "по таймауту");
+            }
+            break;
+        }
+    }
+}
+
+
+void GameScreen::launchRocketBarrage(Enemy& e) {
+
+    // Локальные алиасы для удобства
+    const int OX = GameMap::ORIGIN_X;
+    const int OY = GameMap::ORIGIN_Y;
+    const int TS = GameMap::TILE_SIZE;
+    const int NC = GameMap::COLS;
+    const int NR = GameMap::ROWS;
+
+
+    for (int i = 0; i < Rocket::MAX_ROCKETS; i++) {
+        if (!rockets[i].isActive()) {
+            int rx = OX + random(NC) * TS + TS / 2;
+            int ry = OY + random(NR) * TS + TS / 2;
+
+            if (random(100) < 50) {
+                rx = (int)player.getX() + random(-60, 60);
+                ry = (int)player.getY() + random(-60, 60);
+                if (rx < OX + 10) rx = OX + 10;
+                if (rx > OX + NC * TS - 10) rx = OX + NC * TS - 10;
+                if (ry < OY + 10) ry = OY + 10;
+                if (ry > OY + NR * TS - 10) ry = OY + NR * TS - 10;
+            }
+
+            rockets[i].launch(rx, ry, millis());
+            Serial.printf("Катюша: ракета %d в (%d, %d)\n", i, rx, ry);
+            return;
+        }
+    }
+}
+
+
+
+void GameScreen::updateRockets(uint32_t now) {
+    for (int i = 0; i < Rocket::MAX_ROCKETS; i++) {
+        if (!rockets[i].isActive()) continue;
+
+        bool wasExploding = rockets[i].isExploding();
+        rockets[i].update(now, &map);
+
+        // Если только что начал взрываться — проверяем урон
+        if (!wasExploding && rockets[i].isExploding()) {
+            if (rockets[i].inBlast(player.getX(), player.getY())) {
+                lives--;
+                Serial.printf("Катюша попала! Жизней: %d\n", lives);
+
+                if (lives <= 0) {
+                    gameOver = true;
+                    return;
+                }
+
+                // Респавн в точке P
+                if (map.hasPlayerStart()) {
+                    player.setPosition(map.getPlayerStartX(),
+                                       map.getPlayerStartY());
+                } else {
+                    player.setPosition(240, 185);
+                }
+                player.stop();
+            }
+        }
+    }
+}
+
+
